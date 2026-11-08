@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -17,8 +18,38 @@ def create_job(data: schemas.JobCreate, db: Session = Depends(get_db)):
 
 
 @router.get("", response_model=list[schemas.JobOut])
-def list_jobs(db: Session = Depends(get_db)):
-    return db.query(models.Job).all()
+def list_jobs(
+    status: schemas.Status | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.Job)
+    if status:
+        query = query.filter(models.Job.status == status)
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                models.Job.company.ilike(pattern),
+                models.Job.role.ilike(pattern),
+            )
+        )
+    return query.all()
+
+
+@router.get("/stats")
+def job_stats(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.Job.status, func.count(models.Job.id))
+        .group_by(models.Job.status)
+        .all()
+    )
+    counts = {status: count for status, count in rows}
+    by_status = {
+        s: counts.get(s, 0)
+        for s in ["Applied", "Interview", "Offer", "Rejected"]
+    }
+    return {"total": sum(by_status.values()), "by_status": by_status}
 
 
 @router.get("/{job_id}", response_model=schemas.JobOut)
